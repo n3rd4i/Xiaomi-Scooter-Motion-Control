@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <arduino-timer.h>
 #include <SoftwareSerial.h>
+#define XSMC_VARIANT  3
 
 // ==========================================================================
 // ================================ SETUP ===================================
@@ -12,12 +13,6 @@
 // 2 = Xiaomi Mi Scooter Pro 2
 //
 const int SCOOTERMODEL    = 1;    // Select scooter type
-const int DURATION_LOW    = 1000; // Throttle duration  (in millisec)
-const int DURATION_HIGH   = 4000; // Throttle duration (in millisec)
-const int THROTTLE_LOW    = 25;   // Throttle setting  (in full percentage)
-const int THROTTLE_HIGH   = 100;  // Throttle setting  (in full percentage)
-const int SPEED_LOW       = 5;    // Speed when to use low throttle/duration (in kmph)
-const int SPEED_HIGH      = 15;   // Speed when to use high throttle/duration (in kmph)
 const int THROTTLE_DELAY  = 1500; // Time before accepting a new boost (in millisec)
 const int READINGS_COUNT  = 30;   // Amount of speed readings
 const int THROTTLE_PIN    = 10;   // Pin of programming board (9=D9 or 10=D10)
@@ -65,6 +60,15 @@ auto timer_m = timer_create_default();
 #define SPEEDVALUE  0x64
 #define SERIALVALUE 0x31
 
+// Boost timer, how long the motor will be powered after a kick. time in miliseconds.
+#if (XSMC_VARIANT==2)
+int boosttimer = 8000;
+#else /* XSMC_VARIANT==3 */
+int boosttimer_tier1 = 3000;
+int boosttimer_tier2 = 5000;
+int boosttimer_tier3 = 7000;
+#endif
+
 // Variables
 bool isBraking = true;                    // brake activated
 int speedCurrent = 0;                     // current speed
@@ -88,7 +92,7 @@ void setup()
 {
     Serial.begin(115200); SoftSerial.begin(115200); // Start reading SERIAL_PIN at 115200 baud
     TCCR1B = TCCR1B & 0b11111001; // TCCR1B = TIMER 1 (D9 and D10 on Nano) to 32 khz
-    setThrottle(0);
+    ThrottleWrite(45);
 }
 
 uint8_t buff[256];
@@ -118,9 +122,6 @@ void loop()
             switch (buff[2]) {
                 case BRAKEVALUE:
                     isBraking = (buff[6] > 47);
-                    if (isBraking) {
-                        setThrottle(0);
-                    }
                     break;
             }
         case MOTOR2DASH: // Destination: motor to dash
@@ -150,7 +151,7 @@ bool release_throttle(void *)
 {
     // 10% (Keep throttle to disable KERS). best for Essential.
     // 0% (Close trottle). best for Pro 2 & 1S.
-    setThrottle(SCOOTERMODEL==0 ? 10 : 0);
+    ThrottleWrite(SCOOTERMODEL==0 ? 80 : 45);
     // After boost, wait for new boost
     timer_m.in(THROTTLE_DELAY, motion_wait);
     return false;
@@ -166,31 +167,38 @@ void motion_control()
 {
     // If braking or speed is under 5 km/h, stop throttle
     if (speedCurrent < 5 || isBraking) {
-        setThrottle(0);
+        ThrottleWrite(45); //close throttle directly when break is touched. 0% throttle
         state = READY;
         timer_m.cancel();
     } else if (state == READY && speedCurrentAverage - speedLastAverage > 0 && speedCurrentAverage > 5) {
         // ready, increasing speed and above 5 kmh
-        if (speedCurrentAverage <= SPEED_LOW) { // If speed is low or lower
-              setThrottle(THROTTLE_LOW);
-              timer_m.in(DURATION_LOW, release_throttle);
-        } else if (speedCurrentAverage >= SPEED_HIGH) { // If speed is high or higher
-              setThrottle(THROTTLE_HIGH);
-              timer_m.in(DURATION_HIGH, release_throttle);
-        } else { // If speed between low and high,
-              int speedDiff = SPEED_HIGH-SPEED_LOW;
-              int throttleDiff = THROTTLE_HIGH-THROTTLE_LOW;
-              int durationDiff = DURATION_HIGH-DURATION_LOW;
-              setThrottle(THROTTLE_LOW+throttleDiff/speedDiff*(speedCurrentAverage-SPEED_LOW)); // Open throttle gradually
-              timer_m.in(DURATION_LOW+durationDiff/speedDiff*(speedCurrentAverage-SPEED_LOW), release_throttle); // Start timer to stop throttle
+        if (speedCurrentAverage < 10) {
+          ThrottleWrite(140); //  40% throttle
+#if (XSMC_VARIANT==3)
+          timer_m.in(boosttimer_tier1, release_throttle); //Set timer to release throttle
+#endif /* (XSMC_VARIANT==3) */
+        } else if ((speedCurrentAverage >= 10) && (speedCurrentAverage < 14)) {
+            ThrottleWrite(190); //  80% throttle
+#if (XSMC_VARIANT==3)
+            timer_m.in(boosttimer_tier2, release_throttle); //Set timer to release throttle
+#endif /* (XSMC_VARIANT==3) */
+        } else {
+            ThrottleWrite(233); //  100% throttle
+#if (XSMC_VARIANT==3)
+          timer_m.in(boosttimer_tier3, release_throttle); //Set timer to release throttle
+#endif /* (XSMC_VARIANT==3) */
         }
+#if (XSMC_VARIANT==2)
+        timer_m.in(boosttimer, release_throttle); // Set timer to release throttle
+#endif /* (XSMC_VARIANT==2) */
         state = BOOST;
     }
     speedLastAverage = speedCurrentAverage;
 }
 
-int setThrottle(int percentage)
+int ThrottleWrite(int value)
 {
-    // Percentage in whole numbers: [0, 100], results in a value of [45, 233]
-    analogWrite(THROTTLE_PIN, percentage*1.88+45);
+  if (value != 0) {
+    analogWrite(THROTTLE_PIN, value);
+  }
 }

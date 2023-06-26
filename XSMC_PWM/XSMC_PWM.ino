@@ -1,32 +1,33 @@
 #include <Arduino.h>
 #include <arduino-timer.h>
+#include <SoftwareSerial.h>
 
 
-#include <SoftwareSerial.h> 
+
+
+
+
+
+// Boost timer, how long the motor will be powered after a kick. time in miliseconds.
+int boosttimer = 8000;
+
+int kickdelay = 1000; //time before you can do an new kick after boost timer is expired.
+const int THROTTLE_PIN = 10;
 SoftwareSerial SoftSerial(2, 3); // RX, TX
 
 auto timer_m = timer_create_default();
 
-
-
-const int THROTTLE_PIN = 10;
 int BrakeHandle;
-int Speed; //current speed
-int oldspeed; //speed during last loop
-int trend = 0; //speed trend
+int Speed;                      //current speed
+int oldspeed;                   //speed during last loop
+int trend = 0;                  //speed trend
 
-
-// Boost timer, how long the motor will be powered after a kick. time in miliseconds.
-int boosttimer = 8000; 
-int kickdelay = 1000; //time before you can do an new kick
 
 //motionmodes
 uint8_t motionstate = 0;
 #define motionready 0
 #define motionbusy 1
 #define motionbreaking 2
-
-
 
 
 void logByteInHex(uint8_t val)
@@ -49,14 +50,12 @@ uint8_t readBlocking()
 void setup()
 {
 
-    
   Serial.begin(115200);
   SoftSerial.begin(115200);
 
   Serial.println("Starting Logging data...");
 
   TCCR1B = TCCR1B & 0b11111001;  //Set PWM of PIN 9 & 10 to 32 khz
-
 
   ThrottleWrite(45);
 }
@@ -67,8 +66,8 @@ void loop()
 
   int w = 0;
 
-  
-  
+
+
   while(readBlocking() != 0x55);
   if(readBlocking() != 0xAA)
     return;
@@ -111,7 +110,7 @@ switch (buff[1]) {
     switch (buff[2]) {
       case 0x64:
         Speed = buff[8];
-    } 
+    }
 }
 
 Serial.print("Speed: ");
@@ -131,7 +130,7 @@ Serial.println(" ");
 
 bool release_throttle(void *) {
   Serial.println("Timer expired, stopping...");
-  ThrottleWrite(80); //Keep throttle open for 10% to disable KERS. 
+  ThrottleWrite(80); //Keep throttle open for 10% to disable KERS.
   timer_m.in(kickdelay, motion_wait);
   return false; // false to stop
 }
@@ -149,7 +148,7 @@ void motion_control() {
       if ((Speed != 0) && (Speed < 5)) {
         // If speed is under 5 km/h, stop throttle
         ThrottleWrite(45); //  0% throttle
-        
+
       }
 
   if (BrakeHandle > 46) {
@@ -158,16 +157,13 @@ void motion_control() {
     Serial.println("BRAKE detected!!!");
     motionstate = motionready;
     timer_m.cancel();
-    
-
   }
 
 
 if (Speed != 0){
           // Check if auto throttle is off and speed is increasing
   if (motionstate == motionready) {
-    if (Speed != oldspeed)
-    {
+    if (Speed != oldspeed) {
       trend = Speed - oldspeed;
     }
 
@@ -177,7 +173,7 @@ if (Speed != 0){
       // Check if speed is at least 5 km/h
       if (Speed > 5) {
         // Open throttle for 5 seconds
-        AnalyseKick(); //  100% throttle
+        AnalyseKick();
         Serial.println("Kick detected!");
         timer_m.in(boosttimer, release_throttle); //Set timer to release throttle
         motionstate = motionbusy;
@@ -191,7 +187,7 @@ if (Speed != 0){
 
     }
     else
-    {     
+    {
       // no change in speed
     }
 
@@ -206,15 +202,13 @@ void AnalyseKick(){
 
    if (Speed < 10) {
     ThrottleWrite(140); //  40% throttle
-   }
-    else if ((Speed >= 10) & (Speed < 14)){
+   } else if ((Speed >= 10) & (Speed < 14)){
       ThrottleWrite(190); //  80% throttle
-    }else{
-    
+    } else {
     ThrottleWrite(233); //  100% throttle
    }
-  
-  
+
+
 }
 
 

@@ -64,11 +64,11 @@ const int   SERIAL_PIN           = 2;     // Pin of serial input (2=D2)
 // ============================= DISCLAIMER =================================
 // ==========================================================================
 //
-// THIS SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES ARE PROVIDED BY THE DEVELOPER ON AN "AS IS" AND "AS AVAILLABLE" BASIS, UNLESS 
-// OTHERWISE SPECIFIED IN WRITING. THE DEVELOPER DOES NOT MAKE ANY REPRESENTATIONS OR WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, AS TO THIS 
-// SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES. YOU EXPRESSLY AGREE THAT YOUR USE OF THIS SCRIPT IS AT YOUR OWN RISK. 
+// THIS SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES ARE PROVIDED BY THE DEVELOPER ON AN "AS IS" AND "AS AVAILLABLE" BASIS, UNLESS
+// OTHERWISE SPECIFIED IN WRITING. THE DEVELOPER DOES NOT MAKE ANY REPRESENTATIONS OR WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, AS TO THIS
+// SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES. YOU EXPRESSLY AGREE THAT YOUR USE OF THIS SCRIPT IS AT YOUR OWN RISK.
 //
-// TO THE FULL EXTEND PERMISSABLE BY LAW, THE DEVELOPER DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED. TO THE FULL EXTEND PERMISSABLE BY LAW, 
+// TO THE FULL EXTEND PERMISSABLE BY LAW, THE DEVELOPER DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED. TO THE FULL EXTEND PERMISSABLE BY LAW,
 // THE DEVELOPER WILL NOT BE LIABLE FOR ANY DAMAGES OF ANY KIND ARISING FROM THE USE OF THIS SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES,
 // INCLUDING, BUT NOT LIMITED TO DIRECT, INDIRECT, INCIDENTAL, PUNITIVE AND CONSEQUENTIAL DAMAGES, UNLESS OTHERWISE SPECIFIED IN WRITING.
 //
@@ -113,7 +113,7 @@ void setup() {
 
 uint8_t buff[256];
 
-void loop() {    
+void loop() {
     if(DEBUG_MODE==SNIFFER){
         uint8_t curr = readByte();
         if(curr==XIAOMI_H1 || curr==NINEBOT_H1)Serial.println("");
@@ -169,8 +169,8 @@ void loop() {
                 // h1 h2 0 1  2  3  4 5 6  7  8 9 c1 c2
                 // 5A A5 5 21 20 65 0 4 29 29 0 0 FE FE
                 isBraking = (buff[len+lenOffset-2]>=BRAKE_LIMIT);if(DEBUG_MODE>=EVENT && isBraking)Serial.println((String)"BRAKE: "+buff[len+lenOffset-2]+" ("+(isBraking?"yes":"no")+")");
-                if(isBraking){     
-                    throttlePID.SetMode(MANUAL);         
+                if(isBraking){
+                    throttlePID.SetMode(MANUAL);
                     boostTime=-99999;
                     boostCount = 0;
                     throttleOut = 45;
@@ -180,7 +180,7 @@ void loop() {
             } else if (buff[destIndex]==BLE && buff[2]==SPEED){
                 // Xiaomi
                 // h1 h2 l d  2  3 4 5  6 7 8 9 c1 c2
-                // 55 AA 8 21 64 0 4 64 0 0 0 E FC FE 
+                // 55 AA 8 21 64 0 4 64 0 0 0 E FC FE
                 // Ninebot
                 // h1 h2 l s  d  c  4 5 6  7 8 9 10 c1 c2
                 // 5A A5 6 20 21 64 0 4 4E 0 0 0 7  F4 FE

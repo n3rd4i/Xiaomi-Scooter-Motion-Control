@@ -12,9 +12,9 @@
 // 2 = Xiaomi Mi Scooter Pro 2
 //
 const int SCOOTERMODEL    = 1;    // Select scooter type
-const int DURATION_LOW    = 1000; // Throttle duration  (in millisec)
-const int DURATION_HIGH   = 4000; // Throttle duration (in millisec)
-const int THROTTLE_LOW    = 25;   // Throttle setting  (in full percentage)
+const int DURATION_LOW    = 1000; // Throttle duration (in millisec)
+const int DURATION_HIGH   = 7000; // Throttle duration (in millisec)
+const int THROTTLE_LOW    = 50;   // Throttle setting  (in full percentage)
 const int THROTTLE_HIGH   = 100;  // Throttle setting  (in full percentage)
 const int SPEED_LOW       = 5;    // Speed when to use low throttle/duration (in kmph)
 const int SPEED_HIGH      = 15;   // Speed when to use high throttle/duration (in kmph)
@@ -171,26 +171,31 @@ void motion_control()
         timer_m.cancel();
     } else if (state == READY && speedCurrentAverage - speedLastAverage > 0 && speedCurrentAverage > 5) {
         // ready, increasing speed and above 5 kmh
-        if (speedCurrentAverage <= SPEED_LOW) { // If speed is low or lower
-              setThrottle(THROTTLE_LOW);
-              timer_m.in(DURATION_LOW, release_throttle);
-        } else if (speedCurrentAverage >= SPEED_HIGH) { // If speed is high or higher
-              setThrottle(THROTTLE_HIGH);
-              timer_m.in(DURATION_HIGH, release_throttle);
-        } else { // If speed between low and high,
-              int speedDiff = SPEED_HIGH-SPEED_LOW;
-              int throttleDiff = THROTTLE_HIGH-THROTTLE_LOW;
-              int durationDiff = DURATION_HIGH-DURATION_LOW;
-              setThrottle(THROTTLE_LOW+throttleDiff/speedDiff*(speedCurrentAverage-SPEED_LOW)); // Open throttle gradually
-              timer_m.in(DURATION_LOW+durationDiff/speedDiff*(speedCurrentAverage-SPEED_LOW), release_throttle); // Start timer to stop throttle
+        if (speedCurrentAverage <= SPEED_LOW) {
+            setThrottle(THROTTLE_LOW);
+            timer_m.in(DURATION_LOW, release_throttle);
+        } else if (speedCurrentAverage >= SPEED_HIGH) {
+            setThrottle(THROTTLE_HIGH);
+            timer_m.in(DURATION_HIGH, release_throttle);
+        } else {
+            int speedDiff = SPEED_HIGH - SPEED_LOW;
+            int throttleDiff = THROTTLE_HIGH - THROTTLE_LOW;
+            int durationDiff = DURATION_HIGH - DURATION_LOW;
+            setThrottle(THROTTLE_LOW + throttleDiff/speedDiff * (speedCurrentAverage - SPEED_LOW));
+            timer_m.in(DURATION_LOW + durationDiff/speedDiff * (speedCurrentAverage - SPEED_LOW), release_throttle);
         }
         state = BOOST;
     }
     speedLastAverage = speedCurrentAverage;
 }
 
-int setThrottle(int percentage)
+/**
+ * @brief Set trottle speed in percentage
+ *
+ * @param percentage whole numbers: [0, 100]
+ * @return int value of [45, 233]
+ */
+void setThrottle(int percentage)
 {
-    // Percentage in whole numbers: [0, 100], results in a value of [45, 233]
-    analogWrite(THROTTLE_PIN, percentage*1.88+45);
+    analogWrite(THROTTLE_PIN, percentage * 1.88 + 45);
 }

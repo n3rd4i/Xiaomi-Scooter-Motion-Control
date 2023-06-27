@@ -1,6 +1,6 @@
 {
     "configuration": "cpu=atmega328",
     "board": "arduino:avr:nano",
-    "sketch": "XSMC_trapondersteuning\\XSMC_trapondersteuning.ino",
-    "port": "COM22"
+    "sketch": "XSMC_V1.x\\XSMC_V1.x.ino",
+    "port": "COM3"
 }

@@ -18,8 +18,8 @@ const int THROTTLE_LOW    = 50;   // Throttle setting  (in full percentage)
 const int THROTTLE_HIGH   = 100;  // Throttle setting  (in full percentage)
 const int SPEED_LOW       = 5;    // Speed when to use low throttle/duration (in kmph)
 const int SPEED_HIGH      = 15;   // Speed when to use high throttle/duration (in kmph)
-const int THROTTLE_DELAY  = 1500; // Time before accepting a new boost (in millisec)
-const int READINGS_COUNT  = 30;   // Amount of speed readings
+const int THROTTLE_DELAY  = 1000; // Time before accepting a new boost (in millisec)
+const int READINGS_COUNT  = 32;   // Amount of speed readings
 const int THROTTLE_PIN    = 10;   // Pin of programming board (9=D9 or 10=D10)
 const int SERIAL_PIN      = 2;    // Pin of serial input (2=D2)
 

@@ -1,39 +1,97 @@
-/* =======================================================================
-============================= DISCLAIMER =================================
-==========================================================================
-
-THIS SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES ARE PROVIDED BY THE DEVELOPER ON AN "AS IS" AND "AS AVAILLABLE" BASIS, UNLESS
-OTHERWISE SPECIFIED IN WRITING. THE DEVELOPER DOES NOT MAKE ANY REPRESENTATIONS OR WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, AS TO THIS
-SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES. YOU EXPRESSLY AGREE THAT YOUR USE OF THIS SCRIPT IS AT YOUR OWN RISK.
-
-TO THE FULL EXTEND PERMISSABLE BY LAW, THE DEVELOPER DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED. TO THE FULL EXTEND PERMISSABLE BY LAW,
-THE DEVELOPER WILL NOT BE LIABLE FOR ANY DAMAGES OF ANY KIND ARISING FROM THE USE OF THIS SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES,
-INCLUDING, BUT NOT LIMITED TO DIRECT, INDIRECT, INCIDENTAL, PUNITIVE AND CONSEQUENTIAL DAMAGES, UNLESS OTHERWISE SPECIFIED IN WRITING.
-
-========================================================================== */
+//
+// ==========================================================================
+// ============================= DISCLAIMER =================================
+// ==========================================================================
+//
+// THIS SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES ARE PROVIDED BY THE DEVELOPER ON AN "AS IS" AND "AS AVAILLABLE" BASIS, UNLESS
+// OTHERWISE SPECIFIED IN WRITING. THE DEVELOPER DOES NOT MAKE ANY REPRESENTATIONS OR WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, AS TO THIS
+// SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES. YOU EXPRESSLY AGREE THAT YOUR USE OF THIS SCRIPT IS AT YOUR OWN RISK.
+//
+// TO THE FULL EXTEND PERMISSABLE BY LAW, THE DEVELOPER DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED. TO THE FULL EXTEND PERMISSABLE BY LAW,
+// THE DEVELOPER WILL NOT BE LIABLE FOR ANY DAMAGES OF ANY KIND ARISING FROM THE USE OF THIS SCRIPT, INSTRUCTIONS, INFORMATION AND OTHER SERVICES,
+// INCLUDING, BUT NOT LIMITED TO DIRECT, INDIRECT, INCIDENTAL, PUNITIVE AND CONSEQUENTIAL DAMAGES, UNLESS OTHERWISE SPECIFIED IN WRITING.
+//
+// ==========================================================================
 #include <Arduino.h>
 #include <SoftwareSerial.h>
-#include "xiaomi.h"
-#include "ninebot.h"
-#include "config.h"
+
+// Debug modes
+#define SNIFFER     -1
+#define NONE        0
+#define EVENT       1
+#define ALL         2
+
+#define XIAOMI      1
+#define NINEBOT     2
+
+// ==========================================================================
+// ========================= SERIAL PROTOCOL ================================
+// ==========================================================================
+// Header: BYTE 1 & 2
+#define XIAOMI_H1           0x55
+#define XIAOMI_H2           0xAA
+#define NINEBOT_H1          0x5A
+#define NINEBOT_H2          0xA5
+// Destination: BYTE 3 (XIAOMI) / Source: BYTE 3 & Destination: BYTE 4 (NINEBOT)
+#define BROADCAST_TO_ALL    0x00
+#define ESC                 0x20 // Xiaomi: From BLE / Ninebot: From any
+#define BLE                 0x21 // Xiaomi: From ESC / Ninebot: From any
+#define BMS                 0x22 // Xiaomi: From BLE / Ninebot: From any
+#define BLE_FROM_BMS        0x23 // Xiaomi only
+#define BMS_FROM_ESC        0x24 // Xiaomi only
+#define ESC_FROM_BMS        0x25 // Xiaomi only
+#define WIRED_SERIAL        0x3D // Ninebot only
+#define BLUETOOTH_SERIAL    0x3E // Ninebot only
+#define UNKNOWN_SERIAL      0x3F // Ninebot only
+// Command: BYTE 3 (XIAOMI) / BYTE 4 (NINEBOT)
+#define BRAKE               0x65// ONLY AT DESTINATION 0x20 BLE>ESC
+#define SPEED               0x64 // ONLY AT DESTINATION 0x21 ESC>BLE
+
+// States
+#define READY 0
+#define BOOST 1
+
+// ==========================================================================
+// =============================== CONFIG ===================================
+// ==========================================================================
+//
+const int   DEBUG_MODE          = NONE;  // Debug mode (NONE for no logging, EVENT for event logging, ALL for serial data logging)
+const int   RAW_TROTTLE_LO      = 45;
+const int   RAW_TROTTLE_HI      = 233;
+const float RAW_TROTTLE_SCALAR  = (RAW_TROTTLE_HI - RAW_TROTTLE_LO) / 100;
+const float LIMIT               = 1.5;   // What speed increase limit in km/h to activate boost
+const int   DURATION[3]         = {1000, 3000, 8000};  // Duration of Nth boost {1st,2nd,3rd}
+const int   THROTTLE_MIN_KMH    = 5;     // What speed to start throttling
+const int   THROTTLE_MAX_KMH    = 18;    // What speed to give max throttle (in km/h, we recommend vMax-5)
+const int   THROTTLE_IDLE_PCT   = 0;     // Maximum is 10 to disable KERS when not braking above THROTTLE_MIN_KMH on stock firmware
+const int   THROTTLE_MIN_PCT    = 30;    // Throttle minimum to set power at or below THROTTLE_MIN_KMH (71 for 350W motor, but we recommend adapting the firmware instead)
+const int   THROTTLE_MAX_PCT    = 100;   // Throttle maximum to set power at or below THROTTLE_MIN_KMH (71 for 350W motor, but we recommend adapting the firmware instead)
+const int   THROTTLE_DIFF_KMH   = THROTTLE_MAX_KMH - THROTTLE_MIN_KMH;
+const int   THROTTLE_DIFF_PCT   = THROTTLE_MAX_PCT - THROTTLE_MIN_PCT;
+const int   SPEED_READINGS       = 4;   // Amount of speed readings (increases steadiness but decreases reaction speed)
+
+const int   BRAKE_LIMIT        = 48;    // Limit for disabling throttle when pressing brake pedal (we recommend setting this as low as possible)
+const int   THROTTLE_PIN       = 10;    // Pin of programming board (9=D9 or 10=D10)
+const int   SERIAL_PIN         = 2;     // Pin of serial input (2=D2)
 
 /* CODE BELOW THIS POINT */
 SoftwareSerial SoftSerial(SERIAL_PIN, 3); /* RX, TX */
 
 /* Variables */
 bool isBraking = true;                    // brake activated
-unsigned long startBoost = 0;             // start time of last boost
 int boostCount = 0;                       // count of boosts after reaching THROTTLE_MIN_KMH
-float speedIncrCount = 0;                 // count of consequent speed increases
 int speedRaw = 0;                         // current raw speed
+int speedReadings[SPEED_READINGS] = {0};  // the last 4 readings from the speedometer
+int speedIndex = 0;                       // the index of the current reading
+
+float speedIncrCount = 0;                 // count of consequent speed increases
 float speedValid = 0;                     // the validated speed (median+average over last 5 readings)
 float speedPrevValid = 0;                 // the previous the validated speed
-int speedReadings[4] = {0};               // the last 4 readings from the speedometer
-int index = 0;                            // the index of the current reading
+unsigned long startBoost = 0;             // start time of last boost
 int protocol = NONE;                      // the protocol of last data
 uint8_t state = READY;                    // current state
 
-uint8_t readBlocking()
+uint8_t readByteBlocking()
 {
     while (!SoftSerial.available()) {
         delay(1);
@@ -43,8 +101,7 @@ uint8_t readBlocking()
 
 void setup()
 {
-    Serial.begin(115200);
-    SoftSerial.begin(115200); /* Start reading SERIAL_PIN at 115200 baud */
+    Serial.begin(115200); SoftSerial.begin(115200); /* Start reading SERIAL_PIN at 115200 baud */
     TCCR1B = TCCR1B & 0b11111001; /* TCCR1B = TIMER 1 (D9 and D10 on Nano) to 32 khz */
 }
 
@@ -53,15 +110,13 @@ uint8_t buff[256];
 void loop()
 {
     uint8_t len = 0x00;
-    uint8_t addrSrc = 0x00;
-    uint8_t addrDst = 0x00;
     uint16_t sum = 0x0000;
     uint16_t checksum = 0x0000;
     uint8_t curr = 0x00;
 
-    if(DEBUG_MODE==SNIFFER) {
-        curr = readBlocking();
-        if(curr==XIAOMI_HEADER_BYTE_1 || curr==NINEBOT_HEADER_BYTE_1) {
+    if (DEBUG_MODE == SNIFFER) {
+        curr = readByteBlocking();
+        if (curr==XIAOMI_H1 || curr==NINEBOT_H1) {
             Serial.println("");
         }
         Serial.print(curr,HEX);
@@ -69,105 +124,120 @@ void loop()
     } else {
         switch(protocol) {
             case NONE: { /* Auto detect protocol */
-                switch(readBlocking()) {
-                    case XIAOMI_HEADER_BYTE_1:
-                        if(readBlocking()==XIAOMI_HEADER_BYTE_2){
-                            protocol=XIAOMI;
-                            if(DEBUG_MODE>=EVENT)Serial.println((String)"DETECTED XIAOMI");
+                switch(readByteBlocking()) {
+                    case XIAOMI_H1:
+                        if(readByteBlocking()==XIAOMI_H2){
+                            protocol = XIAOMI;
+                            if (DEBUG_MODE >= EVENT) {
+                                Serial.println((String)"DETECTED XIAOMI");
+                            }
                         }
                         break;
-                    case NINEBOT_HEADER_BYTE_1:
-                        if(readBlocking()==NINEBOT_HEADER_BYTE_2){
-                            protocol=NINEBOT;
-                            if(DEBUG_MODE>=EVENT)Serial.println((String)"DETECTED NINEBOT");
+                    case NINEBOT_H1:
+                        if(readByteBlocking()==NINEBOT_H2){
+                            protocol = NINEBOT;
+                            if (DEBUG_MODE >= EVENT) {
+                                Serial.println((String)"DETECTED NINEBOT");
+                            }
                         }
                         break;
+                // we can support more protocols on the future
                 }
             } break;
             case XIAOMI: {
-                while (readBlocking() != XIAOMI_HEADER_BYTE_1) {
+                while (readByteBlocking() != XIAOMI_H1) {
                     // WAIT FOR BYTE 1
                 };
-                if (readBlocking() != XIAOMI_HEADER_BYTE_2) {
-                    return; // IGNORE INVALID BYTE 2
+                if (readByteBlocking() != XIAOMI_H2) {
+                    return; /* IGNORE INVALID BYTE 2 */
                 }
-                len = readBlocking(); // BYTE 3 = LENGTH
-                if (len<3 || len>8) {
-                    return; // IGNORE INVALID OR TOO LONG LENGTHS
+                len = readByteBlocking(); // BYTE 3 = LENGTH
+                if (len < 3 || len > 8) {
+                    return; /* IGNORE INVALID OR TOO LONG LENGTHS */
                 }
                 buff[0] = len;
                 sum = len;
-                for (int i = 0; i < len+1; i++) { // BYTE 5+
-                    curr = readBlocking();
+                for (int i = 0; i < len + 1; i++) { // BYTE 5+
+                    curr = readByteBlocking();
                     buff[i + 1] = curr; // CHECKSUM: BYTE 3 + 4 + 5+
                     sum += curr;
                 }
-                if(DEBUG_MODE==ALL) {
-                    logBuffer(buff,len);
+                if (DEBUG_MODE==ALL) {
+                    logBuffer(buff, len);
                 }
-                checksum = (uint16_t) readBlocking() | ((uint16_t) readBlocking() << 8);
-                if (checksum != (sum ^ 0xFFFF)) {
-                    if(DEBUG_MODE==ALL){
+                /* LAST 2 BYTES IS CHECKSUM */
+                checksum = (uint16_t) readByteBlocking() | ((uint16_t) readByteBlocking() << 8);
+                if (checksum != (sum ^ 0xFFFF)) { // CHECK XOR OF SUM AGAINST CHECKSUM
+                    if (DEBUG_MODE == ALL) {
                         Serial.println((String)"CHECKSUM FAILED!");
-                        Serial.println((String)"CHECKSUM: "+checksum);
-                        logBuffer(buff,len);
+                        Serial.println((String)"CHECKSUM: " + checksum);
+                        logBuffer(buff, len);
                     }
-                    return;
+                    return; /* STOP ON INVALID CHECKSUM */
                 }
-                if(buff[1]==ESC && buff[2]==BRAKE) {
-                    isBraking = (buff[6]>=BRAKE_LIMIT);
-                    if(DEBUG_MODE>=EVENT) {
-                        Serial.println((String)"BRAKE: "+buff[6]+" ("+(isBraking?"yes":"no")+")");
+                 /* When braking */
+                if (buff[1] == ESC && buff[2] == BRAKE) {
+                    isBraking = (buff[6] >= BRAKE_LIMIT);
+                    if (DEBUG_MODE>=EVENT) {
+                        Serial.println((String)"BRAKE: " + buff[6] + " (" + (isBraking ? "yes" : "no") + ")");
                     }
-                } else if (buff[1]==BLE && buff[2]==SPEED) {
+                } else if (buff[1] == BLE && buff[2] == SPEED) { /* Each speed reading */
                     speedRaw = buff[len];
-                    speedValid=averagemidmedian(speedReadings[0],speedReadings[1],speedReadings[2],speedReadings[3],speedRaw);
-                    speedReadings[index%4] = speedRaw;
-                    index = (index == 3?0:index+1);
-                    if(DEBUG_MODE>=EVENT) {
-                        Serial.println((String)"SPEED: "+buff[len+4]+"kmh");
+                    speedValid = calcSpeedAvg(speedReadings[0], speedReadings[1], speedReadings[2], speedReadings[3], speedRaw);
+                    speedReadings[speedIndex%4] = speedRaw;
+                    speedIndex = (speedIndex == 3 ? 0 : speedIndex + 1);
+                    if (DEBUG_MODE >= EVENT) {
+                        Serial.println((String)"SPEED: " + buff[len + 4] + "kmh");
                     }
                     if(state==READY) {
-                        speedIncrCount = (speedPrevValid>speedValid?0:speedIncrCount+(speedValid-speedPrevValid));
+                        speedIncrCount = (speedPrevValid > speedValid ? 0 : speedIncrCount + (speedValid - speedPrevValid));
                     }
                 }
             } break;
             case NINEBOT: {
-                while (readBlocking() != NINEBOT_HEADER_BYTE_1); // WAIT FOR BYTE 1
-                if (readBlocking() != NINEBOT_HEADER_BYTE_2)return; // IGNORE INVALID BYTE 2
-                len = readBlocking(); // BYTE 3 = LENGTH
-                if (len<3 || len>8)return; // IGNORE INVALID OR TOO LONG LENGTHS
+                while (readByteBlocking() != NINEBOT_H1) {
+                    /* WAIT FOR BYTE 1 */
+                };
+                if (readByteBlocking() != NINEBOT_H2) {
+                    return; /* IGNORE INVALID BYTE 2 */
+                }
+                len = readByteBlocking(); /* BYTE 3 = LENGTH */
+                if (len < 3 || len > 8) {
+                    return; /* IGNORE INVALID OR TOO LONG LENGTHS */
+                }
                 buff[0] = len;
                 sum = len;
-                for (int i = 0; i < len+4; i++) { // BYTE 5+
-                    curr = readBlocking();
-                    buff[i + 1] = curr; // CHECKSUM: BYTE 3 + 4 + 5+
+                for (int i = 0; i < len + 4; i++) { // BYTE 5+
+                    curr = readByteBlocking();
+                    buff[i + 1] = curr; /* CHECKSUM: BYTE 3 + 4 + 5+ */
                     sum += curr;
                 }
-                if(DEBUG_MODE==ALL) {
+                if(DEBUG_MODE == ALL) {
                     logBuffer(buff,len);
                 }
-                checksum = (uint16_t) readBlocking() | ((uint16_t) readBlocking() << 8);
-                if (checksum != (sum ^ 0xFFFF)) {
-                    if(DEBUG_MODE==ALL) {
+                /* LAST 2 BYTES IS CHECKSUM */
+                checksum = (uint16_t) readByteBlocking() | ((uint16_t) readByteBlocking() << 8);
+                if (checksum != (sum ^ 0xFFFF)) { /* CHECK XOR OF SUM AGAINST CHECKSUM */
+                    if (DEBUG_MODE == ALL) {
                         Serial.println((String)"CHECKSUM FAILED!");
-                        Serial.println((String)"CHECKSUM: "+checksum);
-                        logBuffer(buff,len);
+                        Serial.println((String)"CHECKSUM: " + checksum);
+                        logBuffer(buff, len);
                     }
-                    return;
+                    return; /* STOP ON INVALID CHECKSUM */
                 }
-                if(buff[2]==ESC && buff[3]==BRAKE) {
-                    isBraking = (buff[7]>=BRAKE_LIMIT);
+                /* When braking */
+                if(buff[2] == ESC && buff[3] == BRAKE) {
+                    isBraking = (buff[7] >= BRAKE_LIMIT);
                     if(DEBUG_MODE >= EVENT) {
                         Serial.println((String)"BRAKE: "+buff[6]+" ("+(isBraking?"yes":"no")+")");
                     }
-                } else if (buff[2]==BLE && buff[3]==SPEED) {
-                    speedRaw = buff[len+3];
-                    speedValid=averagemidmedian(speedReadings[0],speedReadings[1],speedReadings[2],speedReadings[3],speedRaw);
-                    speedReadings[index%4] = speedRaw;
-                    index = (index == 3?0:index+1);
+                } else if (buff[2] == BLE && buff[3] == SPEED) {
+                    speedRaw = buff[len + 3];
+                    speedValid = calcSpeedAvg(speedReadings[0], speedReadings[1], speedReadings[2], speedReadings[3], speedRaw);
+                    speedReadings[speedIndex%4] = speedRaw;
+                    speedIndex = (speedIndex == 3 ? 0 : speedIndex+1);
                     if(DEBUG_MODE>=EVENT) {
-                        Serial.println((String)"SPEED: "+buff[len+4]+" ("+speedRaw+"kmh)");
+                        Serial.println((String)"SPEED: " + buff[len + 4] + " (" + speedRaw + "kmh)");
                     }
                     if(state==READY) {
                         speedIncrCount = (speedPrevValid>speedValid?0:speedIncrCount+(speedValid-speedPrevValid));
@@ -179,7 +249,7 @@ void loop()
     }
 }
 
-void logBuffer(uint8_t buff[256],int len)
+void logBuffer(uint8_t buff[256], int len)
 {
     uint16_t sum = 0x00;
     Serial.print("DATA: ");
@@ -194,29 +264,6 @@ void logBuffer(uint8_t buff[256],int len)
       Serial.print(" ");
     }
     Serial.println("  (DEC)");
-
-    /*
-    Serial.print("DATA CHECKSUM: ");
-    Serial.print(sum);
-    Serial.print(" (DEC) / ");
-    Serial.print(sum^0xFFFF);
-    Serial.println(" (XOR)");
-    */
-}
-
-/* Calculate median of 5 values by swapping them in a Bose-Nelson Algorithm (very light function!) */
-float averagemidmedian( int a0, int a1, int a2, int a3, int a4 ) {
-    swap(&a0, &a1);
-    swap(&a3, &a4);
-    swap(&a2, &a4);
-    swap(&a2, &a3);
-    swap(&a0, &a3);
-    swap(&a0, &a2);
-    swap(&a1, &a4);
-    swap(&a1, &a3);
-    swap(&a1, &a2);
-
-    return a1 * 0.25 + a2 * 0.5 + a3 * 0.25;
 }
 
 /* Swap values if first is bigger than second */
@@ -228,6 +275,24 @@ void swap(int *j,  int *k)
         *k = x;
         *j = y;
     }
+}
+
+/* Calculate median of 5 values by swapping them
+ * in a Bose-Nelson Algorithm (very light function!) */
+float calcSpeedAvg( int a0, int a1, int a2, int a3, int a4 )
+{
+    /* Average Mid Median */
+    swap(&a0, &a1);
+    swap(&a3, &a4);
+    swap(&a2, &a4);
+    swap(&a2, &a3);
+    swap(&a0, &a3);
+    swap(&a0, &a2);
+    swap(&a1, &a4);
+    swap(&a1, &a3);
+    swap(&a1, &a2);
+
+    return a1 * 0.25 + a2 * 0.5 + a3 * 0.25;
 }
 
 float getThrottle(float pwr,float tme)
@@ -271,7 +336,8 @@ int stopThrottle(bool braking)
     }
 }
 
-void motion_control() {
+void motion_control()
+{
     if (speedRaw < THROTTLE_MIN_KMH) {
         boostCount = 0;
     }
@@ -280,7 +346,7 @@ void motion_control() {
         stopThrottle(true);
     } else {
         /* Check if new boost needed */
-        if(DEBUG_MODE>=EVENT) {
+        if (DEBUG_MODE>=EVENT) {
             Serial.println( state==BOOST ? (String)"BOOSTING..." : (String)"CHECKING: " + (speedIncrCount) + " > " + LIMIT + ": " + (speedIncrCount>LIMIT ? "BOOST ACTIVATED!" : "NO BOOST" ));
         }
         if (speedIncrCount > LIMIT) { // If kick detected
@@ -291,17 +357,19 @@ void motion_control() {
         }
 
         /* Check for existing boost */
-        if (state == BOOST){
+        if (state == BOOST) {
             /* Calculate duration and throttle */
             float power = getPower(speedRaw);
-            int timeElapsed = (millis()-startBoost);
+            int timeElapsed = (millis() - startBoost);
             int timeDuration = getDuration(boostCount);
-            float timeRemaining = (timeElapsed-timeDuration)/(float)1000;
-            float throttlePercentage = getThrottle(power,timeRemaining);
+            float timeRemaining = (timeElapsed - timeDuration) / (float)1000;
+            float throttlePercentage = getThrottle(power, timeRemaining);
 
-            if(throttlePercentage > 10){
+            if (throttlePercentage > 10) {
                 setThrottlePercentage(throttlePercentage);
-                if(DEBUG_MODE>=EVENT)Serial.println((String)"THROTTLE: "+throttlePercentage+"% ("+power+" @ "+-timeRemaining+"s)");
+                if (DEBUG_MODE>=EVENT) {
+                    Serial.println((String)"THROTTLE: " + throttlePercentage + "% (" + power + " @ " + - timeRemaining + "s)");
+                }
             } else { // End of boost
                 stopThrottle(false); // Idle throttle, no regenerative braking
             }
@@ -313,12 +381,14 @@ void motion_control() {
     speedPrevValid = speedValid;
 }
 
-int setThrottleIdle(int offset){
+int setThrottleIdle(int offset)
+{
     /* Percentage in whole numbers: 0-100, results in a value of 45-233 */
-    analogWrite(THROTTLE_PIN, 45 + offset * 1.88);
+    analogWrite(THROTTLE_PIN, RAW_TROTTLE_LO + offset * RAW_TROTTLE_SCALAR);
 }
 
-int setThrottlePercentage(float percentageThrottle) {
+int setThrottlePercentage(float percentageThrottle)
+{
     /* Percentage in whole numbers: 0-100, results in a value of 45-233 */
-    analogWrite(THROTTLE_PIN, 45+THROTTLE_MIN_PCT*1.88+percentageThrottle*THROTTLE_DIFF_PCT/THROTTLE_MAX_PCT*1.88);
+    analogWrite(THROTTLE_PIN, RAW_TROTTLE_LO + THROTTLE_MIN_PCT * RAW_TROTTLE_SCALAR + percentageThrottle * THROTTLE_DIFF_PCT / THROTTLE_MAX_PCT * RAW_TROTTLE_SCALAR);
 }

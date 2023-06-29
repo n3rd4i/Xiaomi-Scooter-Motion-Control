@@ -37,7 +37,10 @@ const int READINGS_COUNT  = 32;   // Amount of speed readings
 const int THROTTLE_PIN    = 10;   // Pin of programming board (9=D9 or 10=D10)
 const int SERIAL_PIN      = 2;    // Pin of serial input (2=D2)
 
-//
+const int   RAW_TROTTLE_LO      = 45;
+const int   RAW_TROTTLE_HI      = 233;
+const float RAW_TROTTLE_SCALAR  = (RAW_TROTTLE_HI - RAW_TROTTLE_LO) / 100;
+
 // ==========================================================================
 // =============================  PROTOCOL ==================================
 // ==========================================================================
@@ -60,8 +63,10 @@ const int SERIAL_PIN      = 2;    // Pin of serial input (2=D2)
 // ==========================================================================
 
 // CODE BELOW THIS POINT
-
-SoftwareSerial SoftSerial(SERIAL_PIN, 3); // RX, TX
+// Header: BYTE 1 & 2
+#define XIAOMI_H1           0x55
+#define XIAOMI_H2           0xAA
+SoftwareSerial SoftSerial(SERIAL_PIN, 3); /* RX, TX */
 auto timer_m = timer_create_default();
 
 // States
@@ -89,12 +94,11 @@ int indexcounter = 0;                     // the indexcounter of the current rea
 int speedReadingsSum = 0;                 // the sum of all speed readings
 uint8_t state = READY;                    // current state
 
-
-
-uint8_t readBlocking()
+uint8_t readByteBlocking()
 {
-    while (!SoftSerial.available())
-    delay(1);
+    while (!SoftSerial.available()) {
+        delay(1);
+    }
     return SoftSerial.read();
 }
 
@@ -108,23 +112,24 @@ void setup()
 uint8_t buff[256];
 void loop()
 {
-    while (readBlocking() != 0x55);
-    if (readBlocking() != 0xAA) return;
-
-    uint8_t len = readBlocking();
+    while (readByteBlocking() != XIAOMI_H1) {
+        // WAIT FOR BYTE 1
+    };
+    if (readByteBlocking() != XIAOMI_H2) return;
+    uint8_t len = readByteBlocking(); /*  BYTE 3 = LENGTH */
     buff[0] = len;
     if (len > 254) return;
 
-    uint8_t addr = readBlocking();
+    uint8_t addr = readByteBlocking();
     buff[1] = addr;
     uint16_t sum = len + addr;
     for (int i = 0; i < len; i++) {
-        uint8_t curr = readBlocking();
+        uint8_t curr = readByteBlocking();
         buff[i + 2] = curr;
         sum += curr;
     }
 
-    uint16_t checksum = (uint16_t)readBlocking() | ((uint16_t)readBlocking() << 8);
+    uint16_t checksum = (uint16_t)readByteBlocking() | ((uint16_t)readByteBlocking() << 8);
     if (checksum != (sum ^ 0xFFFF)) return;
 
     switch (buff[1]) {
@@ -164,7 +169,7 @@ bool release_throttle(void *)
 {
     // 10% (Keep throttle to disable KERS). best for Essential.
     // 0% (Close trottle). best for Pro 2 & 1S.
-    setThrottle(SCOOTERMODEL==0 ? 10 : 0);
+    setThrottle(SCOOTERMODEL == 0 ? 10 : 0);
     // After boost, wait for new boost
     timer_m.in(THROTTLE_DELAY, motion_wait);
     return false;
@@ -211,5 +216,5 @@ void motion_control()
  */
 void setThrottle(int percentage)
 {
-    analogWrite(THROTTLE_PIN, percentage * 1.88 + 45);
+    analogWrite(THROTTLE_PIN, percentage * RAW_TROTTLE_SCALAR + RAW_TROTTLE_LO);
 }

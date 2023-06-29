@@ -22,7 +22,6 @@
 #define ALL         2
 
 #define XIAOMI      1
-#define NINEBOT     2
 
 // ==========================================================================
 // ========================= SERIAL PROTOCOL ================================
@@ -30,21 +29,16 @@
 // Header: BYTE 1 & 2
 #define XIAOMI_H1           0x55
 #define XIAOMI_H2           0xAA
-#define NINEBOT_H1          0x5A
-#define NINEBOT_H2          0xA5
 // Destination: BYTE 3 (XIAOMI) / Source: BYTE 3 & Destination: BYTE 4 (NINEBOT)
 #define BROADCAST_TO_ALL    0x00
-#define ESC                 0x20 // Xiaomi: From BLE / Ninebot: From any
-#define BLE                 0x21 // Xiaomi: From ESC / Ninebot: From any
-#define BMS                 0x22 // Xiaomi: From BLE / Ninebot: From any
+#define ESC                 0x20 // Xiaomi: From BLE
+#define BLE                 0x21 // Xiaomi: From ESC
+#define BMS                 0x22 // Xiaomi: From BLE
 #define BLE_FROM_BMS        0x23 // Xiaomi only
 #define BMS_FROM_ESC        0x24 // Xiaomi only
 #define ESC_FROM_BMS        0x25 // Xiaomi only
-#define WIRED_SERIAL        0x3D // Ninebot only
-#define BLUETOOTH_SERIAL    0x3E // Ninebot only
-#define UNKNOWN_SERIAL      0x3F // Ninebot only
 // Command: BYTE 3 (XIAOMI) / BYTE 4 (NINEBOT)
-#define BRAKE               0x65// ONLY AT DESTINATION 0x20 BLE>ESC
+#define BRAKE               0x65 // ONLY AT DESTINATION 0x20 BLE>ESC
 #define SPEED               0x64 // ONLY AT DESTINATION 0x21 ESC>BLE
 
 // States
@@ -106,7 +100,6 @@ void setup()
 }
 
 uint8_t buff[256];
-
 void loop()
 {
     uint8_t len = 0x00;
@@ -116,7 +109,7 @@ void loop()
 
     if (DEBUG_MODE == SNIFFER) {
         curr = readByteBlocking();
-        if (curr==XIAOMI_H1 || curr==NINEBOT_H1) {
+        if (curr == XIAOMI_H1) {
             Serial.println("");
         }
         Serial.print(curr,HEX);
@@ -126,18 +119,10 @@ void loop()
             case NONE: { /* Auto detect protocol */
                 switch(readByteBlocking()) {
                     case XIAOMI_H1:
-                        if(readByteBlocking()==XIAOMI_H2){
+                        if(readByteBlocking() == XIAOMI_H2){
                             protocol = XIAOMI;
                             if (DEBUG_MODE >= EVENT) {
                                 Serial.println((String)"DETECTED XIAOMI");
-                            }
-                        }
-                        break;
-                    case NINEBOT_H1:
-                        if(readByteBlocking()==NINEBOT_H2){
-                            protocol = NINEBOT;
-                            if (DEBUG_MODE >= EVENT) {
-                                Serial.println((String)"DETECTED NINEBOT");
                             }
                         }
                         break;
@@ -151,7 +136,7 @@ void loop()
                 if (readByteBlocking() != XIAOMI_H2) {
                     return; /* IGNORE INVALID BYTE 2 */
                 }
-                len = readByteBlocking(); // BYTE 3 = LENGTH
+                len = readByteBlocking(); /*  BYTE 3 = LENGTH */
                 if (len < 3 || len > 8) {
                     return; /* IGNORE INVALID OR TOO LONG LENGTHS */
                 }
@@ -191,56 +176,6 @@ void loop()
                     }
                     if(state==READY) {
                         speedIncrCount = (speedPrevValid > speedValid ? 0 : speedIncrCount + (speedValid - speedPrevValid));
-                    }
-                }
-            } break;
-            case NINEBOT: {
-                while (readByteBlocking() != NINEBOT_H1) {
-                    /* WAIT FOR BYTE 1 */
-                };
-                if (readByteBlocking() != NINEBOT_H2) {
-                    return; /* IGNORE INVALID BYTE 2 */
-                }
-                len = readByteBlocking(); /* BYTE 3 = LENGTH */
-                if (len < 3 || len > 8) {
-                    return; /* IGNORE INVALID OR TOO LONG LENGTHS */
-                }
-                buff[0] = len;
-                sum = len;
-                for (int i = 0; i < len + 4; i++) { // BYTE 5+
-                    curr = readByteBlocking();
-                    buff[i + 1] = curr; /* CHECKSUM: BYTE 3 + 4 + 5+ */
-                    sum += curr;
-                }
-                if(DEBUG_MODE == ALL) {
-                    logBuffer(buff,len);
-                }
-                /* LAST 2 BYTES IS CHECKSUM */
-                checksum = (uint16_t) readByteBlocking() | ((uint16_t) readByteBlocking() << 8);
-                if (checksum != (sum ^ 0xFFFF)) { /* CHECK XOR OF SUM AGAINST CHECKSUM */
-                    if (DEBUG_MODE == ALL) {
-                        Serial.println((String)"CHECKSUM FAILED!");
-                        Serial.println((String)"CHECKSUM: " + checksum);
-                        logBuffer(buff, len);
-                    }
-                    return; /* STOP ON INVALID CHECKSUM */
-                }
-                /* When braking */
-                if(buff[2] == ESC && buff[3] == BRAKE) {
-                    isBraking = (buff[7] >= BRAKE_LIMIT);
-                    if(DEBUG_MODE >= EVENT) {
-                        Serial.println((String)"BRAKE: "+buff[6]+" ("+(isBraking?"yes":"no")+")");
-                    }
-                } else if (buff[2] == BLE && buff[3] == SPEED) {
-                    speedRaw = buff[len + 3];
-                    speedValid = calcSpeedAvg(speedReadings[0], speedReadings[1], speedReadings[2], speedReadings[3], speedRaw);
-                    speedReadings[speedIndex%4] = speedRaw;
-                    speedIndex = (speedIndex == 3 ? 0 : speedIndex+1);
-                    if(DEBUG_MODE>=EVENT) {
-                        Serial.println((String)"SPEED: " + buff[len + 4] + " (" + speedRaw + "kmh)");
-                    }
-                    if(state==READY) {
-                        speedIncrCount = (speedPrevValid>speedValid?0:speedIncrCount+(speedValid-speedPrevValid));
                     }
                 }
             } break;
@@ -325,13 +260,13 @@ int stopThrottle(bool braking)
 {
     setThrottleIdle(braking ? 0 : THROTTLE_IDLE_PCT);
     state = READY;
-    speedIncrCount=0;
-    speedReadings[0]=speedRaw;
-    speedReadings[1]=speedRaw;
-    speedReadings[2]=speedRaw;
-    speedReadings[3]=speedRaw;
+    speedIncrCount = 0;
+    speedReadings[0] = speedRaw;
+    speedReadings[1] = speedRaw;
+    speedReadings[2] = speedRaw;
+    speedReadings[3] = speedRaw;
 
-    if(speedValid >= THROTTLE_MIN_KMH && DEBUG_MODE>=EVENT) {
+    if(speedValid >= THROTTLE_MIN_KMH && DEBUG_MODE >= EVENT) {
         Serial.println((String)"READY");
     }
 }
